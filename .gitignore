@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.local
+
+# Personal music files — never committed
+public/tracks/*.mp3
+public/tracks/*.ogg
+public/tracks/*.wav

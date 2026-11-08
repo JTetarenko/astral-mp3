@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Astral Resonance</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='16,2 20,12 30,16 20,20 16,30 12,20 2,16 12,12' fill='%23ff6b2e'/%3E%3C/svg%3E"
+    />
+    <style>
+      html, body { margin: 0; background: #060806; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // ?headless — test hook for driving the game without compositing (CI /
+      // agent verification): rAF becomes a manually pumped queue, the WebGL
+      // buffer stays readable for canvas.toDataURL, and the audio clock can be
+      // faked (window.__fakeTime) so song structure is sweepable. Must run
+      // before the module graph loads so every library sees the patched APIs.
+      if (new URLSearchParams(location.search).has('headless')) {
+        window.__rafQ = []
+        window.requestAnimationFrame = function (cb) {
+          window.__rafQ.push(cb)
+          return window.__rafQ.length
+        }
+        window.cancelAnimationFrame = function () {}
+        // ResizeObserver callbacks are only delivered during rendering steps,
+        // which never happen without compositing — R3F's <Canvas> would wait
+        // for its first measurement forever. Deliver one synthetically.
+        window.ResizeObserver = class {
+          constructor(cb) {
+            this.cb = cb
+          }
+          observe(el) {
+            var cb = this.cb
+            var self = this
+            Promise.resolve().then(function () {
+              var r = el.getBoundingClientRect()
+              var size = [{ inlineSize: r.width, blockSize: r.height }]
+              cb(
+                [
+                  {
+                    target: el,
+                    contentRect: r,
+                    borderBoxSize: size,
+                    contentBoxSize: size,
+                    devicePixelContentBoxSize: [
+                      {
+                        inlineSize: r.width * window.devicePixelRatio,
+                        blockSize: r.height * window.devicePixelRatio,
+                      },
+                    ],
+                  },
+                ],
+                self,
+              )
+            })
+          }
+          unobserve() {}
+          disconnect() {}
+        }
+        var origGetContext = HTMLCanvasElement.prototype.getContext
+        HTMLCanvasElement.prototype.getContext = function (type, attrs) {
+          if (type === 'webgl' || type === 'webgl2') {
+            attrs = Object.assign({}, attrs, { preserveDrawingBuffer: true })
+          }
+          return origGetContext.call(this, type, attrs)
+        }
+        window.__fakeTime = null // set to a number to take over the audio clock
+        var ctDesc = Object.getOwnPropertyDescriptor(BaseAudioContext.prototype, 'currentTime')
+        Object.defineProperty(BaseAudioContext.prototype, 'currentTime', {
+          configurable: true,
+          get: function () {
+            return window.__fakeTime !== null ? window.__fakeTime : ctDesc.get.call(this)
+          },
+        })
+        var origNow = performance.now.bind(performance)
+        window.__timeSkew = 0
+        performance.now = function () {
+          return origNow() + window.__timeSkew
+        }
+        window.__pumpErr = null
+        // advance wall time + audio time + one rAF generation per frame
+        window.__drive = function (frames, dtMs) {
+          dtMs = dtMs || 16.7
+          for (var i = 0; i < frames; i++) {
+            window.__timeSkew += dtMs
+            if (window.__fakeTime !== null) window.__fakeTime += dtMs / 1000
+            var cbs = window.__rafQ.splice(0, window.__rafQ.length)
+            var now = performance.now()
+            for (var j = 0; j < cbs.length; j++) {
+              try {
+                cbs[j](now)
+              } catch (e) {
+                window.__pumpErr = String(e)
+              }
+            }
+          }
+          return window.__rafQ.length
+        }
+      }
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
